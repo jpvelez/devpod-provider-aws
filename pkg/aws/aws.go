@@ -176,8 +176,8 @@ func GetSubnet(ctx context.Context, provider *AwsProvider) (string, error) {
 		}
 	}
 	p := ec2.NewDescribeSubnetsPaginator(svc, input)
-	var taggedSubnetMaxIPCount, vpcedSubnetMaxIPCount int32
-	var taggedSubnet, vpcedSubnet *types.Subnet
+	var taggedSubnetMaxIPCount, vpcedSubnetMaxIPCount, defaultVpcSubnetMaxIPCount int32
+	var taggedSubnet, vpcedSubnet, defaultVpcSubnet *types.Subnet
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
@@ -199,6 +199,13 @@ func GetSubnet(ctx context.Context, provider *AwsProvider) (string, error) {
 				vpcedSubnetMaxIPCount = *s.AvailableIpAddressCount
 				vpcedSubnet = &s
 			}
+			// If no VPC is specified, look for subnets in any VPC with MapPublicIpOnLaunch
+			if provider.Config.VpcID == "" &&
+				*s.AvailableIpAddressCount > defaultVpcSubnetMaxIPCount &&
+				*s.MapPublicIpOnLaunch {
+				defaultVpcSubnetMaxIPCount = *s.AvailableIpAddressCount
+				defaultVpcSubnet = &s
+			}
 		}
 	}
 
@@ -212,11 +219,12 @@ func GetSubnet(ctx context.Context, provider *AwsProvider) (string, error) {
 		return *vpcedSubnet.SubnetId, nil
 	}
 
-	if provider.Config.VpcID == "" {
-		return "", errors.New("could not find a suitable subnet. Please either specify a subnet ID or VPC ID, or tag the desired subnets with devpod:devpod")
+	// If no VPC is specified, return a subnet with MapPublicIpOnLaunch from any VPC (likely the default VPC)
+	if defaultVpcSubnet != nil {
+		return *defaultVpcSubnet.SubnetId, nil
 	}
 
-	return "", nil
+	return "", errors.New("could not find a suitable subnet. Please either specify a subnet ID or VPC ID, or tag the desired subnets with devpod:devpod")
 }
 
 func GetDevpodVPC(ctx context.Context, provider *AwsProvider) (string, error) {
